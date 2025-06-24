@@ -207,7 +207,7 @@ private:
 
         autoware_vehicle_msgs::msg::VelocityReport velocity_msg;
         velocity_msg.header.frame_id = "base_link";
-        velocity_msg.header.stamp = this->now();
+        velocity_msg.header.stamp = msg->header.stamp;
         velocity_msg.longitudinal_velocity = longitudinal_velocity;
         velocity_msg.heading_rate = longitudinal_velocity * std::tan(curr_steer) / wheel_base;
 
