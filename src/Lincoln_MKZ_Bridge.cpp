@@ -2,11 +2,11 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/parameter.hpp"
 #include "sensor_msgs/msg/joy.hpp"
-#include "autoware_auto_vehicle_msgs/msg/gear_report.hpp"
-#include "autoware_auto_vehicle_msgs/msg/gear_command.hpp"
-#include "autoware_auto_vehicle_msgs/msg/steering_report.hpp"
-#include "autoware_auto_vehicle_msgs/msg/velocity_report.hpp"
-#include "autoware_auto_control_msgs/msg/ackermann_control_command.hpp"
+#include "autoware_vehicle_msgs/msg/gear_report.hpp"
+#include "autoware_vehicle_msgs/msg/gear_command.hpp"
+#include "autoware_vehicle_msgs/msg/steering_report.hpp"
+#include "autoware_vehicle_msgs/msg/velocity_report.hpp"
+#include "autoware_control_msgs/msg/control.hpp"
 
 #include "ds_dbw_msgs/msg/gear_cmd.hpp"
 #include "ds_dbw_msgs/msg/gear_report.hpp"
@@ -47,9 +47,9 @@ public:
         ulc_publisher = this->create_publisher<ds_dbw_msgs::msg::UlcCmd>("/vehicle/ulc/cmd", 10);
 
         //To Autoware
-        gear_report_publisher_ = this->create_publisher<autoware_auto_vehicle_msgs::msg::GearReport>("/vehicle/status/gear_status", 10);
-        steering_report_publisher_ = this->create_publisher<autoware_auto_vehicle_msgs::msg::SteeringReport>("/vehicle/status/steering_status", 10);
-        vehicle_speed_publisher_ = this->create_publisher<autoware_auto_vehicle_msgs::msg::VelocityReport>("/vehicle/status/velocity_status", 10);
+        gear_report_publisher_ = this->create_publisher<autoware_vehicle_msgs::msg::GearReport>("/vehicle/status/gear_status", 10);
+        steering_report_publisher_ = this->create_publisher<autoware_vehicle_msgs::msg::SteeringReport>("/vehicle/status/steering_status", 10);
+        vehicle_speed_publisher_ = this->create_publisher<autoware_vehicle_msgs::msg::VelocityReport>("/vehicle/status/velocity_status", 10);
 
         //From DBW Node
         gear_report_subscription_ = this->create_subscription<ds_dbw_msgs::msg::GearReport>(
@@ -63,10 +63,10 @@ public:
             std::bind(&Lincoln_MKZ_Bridge::vehicleTwistCallback, this, std::placeholders::_1));
 
         //From Autoware    
-        gear_subscription_ = this->create_subscription<autoware_auto_vehicle_msgs::msg::GearCommand>(
+        gear_subscription_ = this->create_subscription<autoware_vehicle_msgs::msg::GearCommand>(
             "/control/command/gear_cmd", 10,
             std::bind(&Lincoln_MKZ_Bridge::gearCallback, this, std::placeholders::_1));
-        control_subscription_ = this->create_subscription<autoware_auto_control_msgs::msg::AckermannControlCommand>(
+        control_subscription_ = this->create_subscription<autoware_control_msgs::msg::Control>(
             "/control/command/control_cmd", 10,
             std::bind(&Lincoln_MKZ_Bridge::controlCallback, this, std::placeholders::_1));
 
@@ -90,7 +90,7 @@ private:
     float curr_steer;
     float wheel_base;
 
-   void gearCallback(const autoware_auto_vehicle_msgs::msg::GearCommand::SharedPtr msg)
+   void gearCallback(const autoware_vehicle_msgs::msg::GearCommand::SharedPtr msg)
     {
         ds_dbw_msgs::msg::GearCmd ford_msg;
         ford_msg.cmd.value = translate_gear(msg->command);
@@ -98,14 +98,14 @@ private:
     }
 
 
-   void controlCallback(const autoware_auto_control_msgs::msg::AckermannControlCommand::SharedPtr msg)
+   void controlCallback(const autoware_control_msgs::msg::Control::SharedPtr msg)
     {
         // Throttle & Brake
         ds_dbw_msgs::msg::UlcCmd ulc_publisher_;
         ctrl_time = this->now();
         ulc_publisher_.header.stamp = get_clock()->now();
         ulc_publisher_.cmd_type = ds_dbw_msgs::msg::UlcCmd::CMD_VELOCITY;
-        ulc_publisher_.cmd = msg->longitudinal.speed;
+        ulc_publisher_.cmd = msg->longitudinal.velocity;
         // cout << "Speed:" << msg->longitudinal.speed << endl;
         ulc_publisher_.clear = false;
         ulc_publisher_.enable = true;
@@ -152,16 +152,16 @@ private:
 
        switch(autoware_gear)
        {
-            case autoware_auto_vehicle_msgs::msg::GearCommand::NEUTRAL: return FordGear::NEUTRAL;
-            case autoware_auto_vehicle_msgs::msg::GearCommand::DRIVE:
-            case autoware_auto_vehicle_msgs::msg::GearCommand::DRIVE_2:
+            case autoware_vehicle_msgs::msg::GearCommand::NEUTRAL: return FordGear::NEUTRAL;
+            case autoware_vehicle_msgs::msg::GearCommand::DRIVE:
+            case autoware_vehicle_msgs::msg::GearCommand::DRIVE_2:
                return FordGear::DRIVE;
-            case autoware_auto_vehicle_msgs::msg::GearCommand::REVERSE:
-            case autoware_auto_vehicle_msgs::msg::GearCommand::REVERSE_2:
+            case autoware_vehicle_msgs::msg::GearCommand::REVERSE:
+            case autoware_vehicle_msgs::msg::GearCommand::REVERSE_2:
                return FordGear::REVERSE;
-            case autoware_auto_vehicle_msgs::msg::GearCommand::PARK: return FordGear::PARK;
-            case autoware_auto_vehicle_msgs::msg::GearCommand::LOW:
-            case autoware_auto_vehicle_msgs::msg::GearCommand::LOW_2:
+            case autoware_vehicle_msgs::msg::GearCommand::PARK: return FordGear::PARK;
+            case autoware_vehicle_msgs::msg::GearCommand::LOW:
+            case autoware_vehicle_msgs::msg::GearCommand::LOW_2:
                return FordGear::LOW;
             default: return FordGear::NONE; 
        }
@@ -169,7 +169,7 @@ private:
 
     void gearReportCallback(const ds_dbw_msgs::msg::GearReport::SharedPtr msg)
     {
-        autoware_auto_vehicle_msgs::msg::GearReport aw_report;
+        autoware_vehicle_msgs::msg::GearReport aw_report;
         aw_report.stamp = msg->header.stamp;
         aw_report.report = translateFordGearToAutowareGear(msg->gear.value);
         gear_report_publisher_->publish(aw_report);
@@ -178,7 +178,7 @@ private:
 
     uint8_t translateFordGearToAutowareGear(uint8_t ford_gear_value)
     {
-        using AutowareGear = autoware_auto_vehicle_msgs::msg::GearReport;
+        using AutowareGear = autoware_vehicle_msgs::msg::GearReport;
 
         switch(ford_gear_value)
         {
@@ -193,7 +193,7 @@ private:
 
     void steeringReportCallback(const ds_dbw_msgs::msg::SteeringReport::SharedPtr msg)
     {
-        autoware_auto_vehicle_msgs::msg::SteeringReport aw_steering_report;
+        autoware_vehicle_msgs::msg::SteeringReport aw_steering_report;
         aw_steering_report.stamp = msg->header.stamp;
         curr_steer = msg->steering_wheel_angle * (M_PI / 180.0);
         aw_steering_report.steering_tire_angle = curr_steer / steering_gain;
@@ -205,9 +205,9 @@ private:
         float longitudinal_velocity = msg->vehicle_velocity_propulsion;
         // cout << "Vehicle Speed: " << longitudinal_velocity * 3.6f << " km/h" << endl;
 
-        autoware_auto_vehicle_msgs::msg::VelocityReport velocity_msg;
+        autoware_vehicle_msgs::msg::VelocityReport velocity_msg;
         velocity_msg.header.frame_id = "base_link";
-        velocity_msg.header.stamp = this->now();
+        velocity_msg.header.stamp = msg->header.stamp;
         velocity_msg.longitudinal_velocity = longitudinal_velocity;
         velocity_msg.heading_rate = longitudinal_velocity * std::tan(curr_steer) / wheel_base;
 
@@ -225,20 +225,20 @@ private:
         joy_ = *msg;
     }
 
-    rclcpp::Subscription<autoware_auto_vehicle_msgs::msg::GearCommand>::SharedPtr gear_subscription_;
-    rclcpp::Subscription<autoware_auto_control_msgs::msg::AckermannControlCommand>::SharedPtr control_subscription_;
+    rclcpp::Subscription<autoware_vehicle_msgs::msg::GearCommand>::SharedPtr gear_subscription_;
+    rclcpp::Subscription<autoware_control_msgs::msg::Control>::SharedPtr control_subscription_;
     rclcpp::Subscription<ds_dbw_msgs::msg::GearReport>::SharedPtr gear_report_subscription_;
     rclcpp::Subscription<ds_dbw_msgs::msg::SteeringReport>::SharedPtr steering_report_subscription_;
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_joy_;
     // rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr vehicle_speed_subscription_;
     rclcpp::Subscription<ds_dbw_msgs::msg::VehicleVelocity>::SharedPtr vehicle_speed_subscription_;
 
-    rclcpp::Publisher<autoware_auto_vehicle_msgs::msg::SteeringReport>::SharedPtr steering_report_publisher_;
-    rclcpp::Publisher<autoware_auto_vehicle_msgs::msg::GearReport>::SharedPtr gear_report_publisher_;
+    rclcpp::Publisher<autoware_vehicle_msgs::msg::SteeringReport>::SharedPtr steering_report_publisher_;
+    rclcpp::Publisher<autoware_vehicle_msgs::msg::GearReport>::SharedPtr gear_report_publisher_;
     rclcpp::Publisher<ds_dbw_msgs::msg::GearCmd>::SharedPtr gear_publisher_;
     rclcpp::Publisher<ds_dbw_msgs::msg::SteeringCmd>::SharedPtr steering_publisher_;
     rclcpp::Publisher<ds_dbw_msgs::msg::UlcCmd>::SharedPtr ulc_publisher;
-    rclcpp::Publisher<autoware_auto_vehicle_msgs::msg::VelocityReport>::SharedPtr vehicle_speed_publisher_;
+    rclcpp::Publisher<autoware_vehicle_msgs::msg::VelocityReport>::SharedPtr vehicle_speed_publisher_;
     rclcpp::Time ctrl_time;
 
 
