@@ -5,16 +5,26 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(message_filters REQUIRED)
 find_package(autoware_vehicle_msgs REQUIRED)
 find_package(autoware_control_msgs REQUIRED)
+find_package(tier4_vehicle_msgs REQUIRED)
+find_package(tier4_api_msgs REQUIRED)
+find_package(tier4_api_utils REQUIRED)
+find_package(tier4_external_api_msgs REQUIRED)
 find_package(ds_dbw_msgs REQUIRED)
-find_package(sensor_msgs REQUIRED)
 
 add_executable(Lincoln_MKZ_Bridge src/Lincoln_MKZ_Bridge.cpp)
-ament_target_dependencies(Lincoln_MKZ_Bridge rclcpp autoware_vehicle_msgs autoware_control_msgs ds_dbw_msgs sensor_msgs)
+ament_target_dependencies(Lincoln_MKZ_Bridge rclcpp std_msgs sensor_msgs message_filters autoware_vehicle_msgs autoware_control_msgs tier4_vehicle_msgs tier4_api_msgs tier4_api_utils tier4_external_api_msgs ds_dbw_msgs)
 
 install(TARGETS
   Lincoln_MKZ_Bridge
