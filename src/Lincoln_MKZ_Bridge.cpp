@@ -30,6 +30,8 @@
 #include "ds_dbw_msgs/msg/gear_report.hpp"
 #include "ds_dbw_msgs/msg/steering_cmd.hpp"
 #include "ds_dbw_msgs/msg/steering_report.hpp"
+#include "ds_dbw_msgs/msg/throttle_cmd.hpp"
+#include "ds_dbw_msgs/msg/throttle_report.hpp"
 #include "ds_dbw_msgs/msg/ulc_cmd.hpp"
 #include "ds_dbw_msgs/msg/vehicle_velocity.hpp"
 
@@ -56,6 +58,7 @@ public:
     gear_publisher_ = create_publisher<ds_dbw_msgs::msg::GearCmd>("/vehicle/gear/cmd", 10);
     steering_publisher_ = create_publisher<ds_dbw_msgs::msg::SteeringCmd>("/vehicle/steering/cmd", 10);
     ulc_publisher = create_publisher<ds_dbw_msgs::msg::UlcCmd>("/vehicle/ulc/cmd", 10);
+    throttle_publisher_ = create_publisher<ds_dbw_msgs::msg::ThrottleCmd>("/vehicle/throttle/cmd", 10);
 
     /*──────────────── Publishers to Autoware ────────────────*/
     gear_report_publisher_ = create_publisher<autoware_vehicle_msgs::msg::GearReport>("/vehicle/status/gear_status", 10);
@@ -157,7 +160,8 @@ private:
   rclcpp::Publisher<ds_dbw_msgs::msg::GearCmd>::SharedPtr gear_publisher_;
   rclcpp::Publisher<ds_dbw_msgs::msg::SteeringCmd>::SharedPtr steering_publisher_;
   rclcpp::Publisher<ds_dbw_msgs::msg::UlcCmd>::SharedPtr ulc_publisher;
-  
+  rclcpp::Publisher<ds_dbw_msgs::msg::ThrottleCmd>::SharedPtr throttle_publisher_;
+
   // To Autoware
   rclcpp::Publisher<autoware_vehicle_msgs::msg::GearReport>::SharedPtr gear_report_publisher_;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::SteeringReport>::SharedPtr steering_report_publisher_;
@@ -349,21 +353,31 @@ private:
     ctrl_time = now();
     
     // Longitudinal control via ULC
-    ds_dbw_msgs::msg::UlcCmd ulc_cmd;
-    ulc_cmd.header.stamp = ctrl_time;
-    ulc_cmd.cmd_type = ds_dbw_msgs::msg::UlcCmd::CMD_VELOCITY;
-    ulc_cmd.cmd = msg->longitudinal.velocity;
-    ulc_cmd.clear = false;
-    ulc_cmd.enable = true;
-    ulc_cmd.limit_accel = 0;
-    ulc_cmd.limit_decel = 0;
-    ulc_cmd.limit_jerk_throttle = 0;
-    ulc_cmd.limit_jerk_brake = 0;
-    ulc_cmd.enable_shift = false;
-    ulc_cmd.enable_shift_park = false;
-    ulc_cmd.coast_decel = false;
-    ulc_publisher->publish(ulc_cmd);
+    // ds_dbw_msgs::msg::UlcCmd ulc_cmd;
+    // ulc_cmd.header.stamp = ctrl_time;
+    // ulc_cmd.cmd_type = ds_dbw_msgs::msg::UlcCmd::CMD_VELOCITY;
+    // ulc_cmd.cmd = msg->longitudinal.velocity;
+    // ulc_cmd.clear = false;
+    // ulc_cmd.enable = true;
+    // ulc_cmd.limit_accel = 0;
+    // ulc_cmd.limit_decel = 0;
+    // ulc_cmd.limit_jerk_throttle = 0;
+    // ulc_cmd.limit_jerk_brake = 0;
+    // ulc_cmd.enable_shift = false;
+    // ulc_cmd.enable_shift_park = false;
+    // ulc_cmd.coast_decel = false;
+    // ulc_publisher->publish(ulc_cmd);
 
+    // Longitudinal Control via Joysick Demo Inspired Code
+    ds_dbw_msgs::msg::ThrottleCmd throttle_cmd;
+    throttle_cmd.header.stamp = ctrl_time; //Maybe this is a mistake..? Check this line if something funny is happening with the timestamp during testing.
+    throttle_cmd.enable = true;
+    throttle_cmd.ignore = false; // No info on this change during testing and see the reaction.
+    throttle_cmd.cmd_type = ds_dbw_msgs::msg::ThrottleCmd::CMD_PEDAL_RAW; // 13 = CMD_PEDAL_RAW as per the throttle_cmd message. (CAUTION!!!:: THIS IS RAW PEDAL SENSOR UNITS MODE)
+    throttle_cmd.cmd = msg->longitudinal.velocity * (10) + 90; // throttle_min = 10% & throttle_max = 90% for this command type
+    throttle_cmd.rate_inc = 0; // Run Joystick node once and verify the thrtl_inc_ param
+    throttle_cmd.rate_dec = 0; // Run Joystick node once and verify the thrtl_dec_ param
+    throttle_publisher_->publish(throttle_cmd);
     // Lateral control via steering
     ds_dbw_msgs::msg::SteeringCmd steering_msg;
     double steering_angle_degrees = steering_gain * msg->lateral.steering_tire_angle * (180.0 / M_PI);
