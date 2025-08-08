@@ -30,6 +30,8 @@
 #include "ds_dbw_msgs/msg/gear_report.hpp"
 #include "ds_dbw_msgs/msg/steering_cmd.hpp"
 #include "ds_dbw_msgs/msg/steering_report.hpp"
+#include "ds_dbw_msgs/msg/throttle_cmd.hpp"
+#include "ds_dbw_msgs/msg/throttle_report.hpp"
 #include "ds_dbw_msgs/msg/ulc_cmd.hpp"
 #include "ds_dbw_msgs/msg/vehicle_velocity.hpp"
 
@@ -56,6 +58,7 @@ public:
     gear_publisher_ = create_publisher<ds_dbw_msgs::msg::GearCmd>("/vehicle/gear/cmd", 10);
     steering_publisher_ = create_publisher<ds_dbw_msgs::msg::SteeringCmd>("/vehicle/steering/cmd", 10);
     ulc_publisher = create_publisher<ds_dbw_msgs::msg::UlcCmd>("/vehicle/ulc/cmd", 10);
+    throttle_publisher_ = create_publisher<ds_dbw_msgs::msg::ThrottleCmd>("/vehicle/throttle/cmd", 10);
 
     /*──────────────── Publishers to Autoware ────────────────*/
     gear_report_publisher_ = create_publisher<autoware_vehicle_msgs::msg::GearReport>("/vehicle/status/gear_status", 10);
@@ -157,7 +160,8 @@ private:
   rclcpp::Publisher<ds_dbw_msgs::msg::GearCmd>::SharedPtr gear_publisher_;
   rclcpp::Publisher<ds_dbw_msgs::msg::SteeringCmd>::SharedPtr steering_publisher_;
   rclcpp::Publisher<ds_dbw_msgs::msg::UlcCmd>::SharedPtr ulc_publisher;
-  
+  rclcpp::Publisher<ds_dbw_msgs::msg::ThrottleCmd>::SharedPtr throttle_publisher_;
+
   // To Autoware
   rclcpp::Publisher<autoware_vehicle_msgs::msg::GearReport>::SharedPtr gear_report_publisher_;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::SteeringReport>::SharedPtr steering_report_publisher_;
@@ -239,12 +243,12 @@ private:
     status.status.steer_status = msg->actuation.steer_cmd;
     actuation_status_publisher_->publish(status);
     
-    // Note: DS-DBW uses ULC for longitudinal control, not direct pedal commands
   }
 
+  // TODO: Correct the logic so that this is passed down to DS DBW
   void callbackTurnIndicatorsCommand(const autoware_vehicle_msgs::msg::TurnIndicatorsCommand::SharedPtr msg)
   {
-    RCLCPP_DEBUG(get_logger(), "Received turn indicators command: %d", msg->command);
+    // RCLCPP_DEBUG(get_logger(), "Received turn indicators command: %d", msg->command);
     
     last_turn_cmd_ = msg;
     
@@ -254,12 +258,11 @@ private:
     report.report = msg->command;
     turn_indicators_status_publisher_->publish(report);
     
-    // Note: DS-DBW doesn't have direct turn signal control, handled by body ECU
   }
 
   void callbackHazardLightsCommand(const autoware_vehicle_msgs::msg::HazardLightsCommand::SharedPtr msg)
   {
-    RCLCPP_DEBUG(get_logger(), "Received hazard lights command: %d", msg->command);
+    // RCLCPP_DEBUG(get_logger(), "Received hazard lights command: %d", msg->command);
     
     last_hazard_cmd_ = msg;
     
@@ -269,13 +272,12 @@ private:
     report.report = msg->command;
     hazard_lights_status_publisher_->publish(report);
     
-    // Note: DS-DBW doesn't have direct hazard light control, handled by body ECU
   }
 
   void recvDbwEnabled(const std_msgs::msg::Bool::SharedPtr msg)
   {
     dbw_enabled_ = msg->data;
-    // RCLCPP_INFO(get_logger(), "DBW enabled status changed: %s", dbw_enabled_ ? "ENABLED" : "DISABLED");
+    // RCLCPP_DEBUG(get_logger(), "DBW enabled status changed: %s", dbw_enabled_ ? "ENABLED" : "DISABLED");
     
     // Publish control mode based on DBW status
     autoware_vehicle_msgs::msg::ControlModeReport mode_report;
@@ -291,7 +293,7 @@ private:
    *══════════════════════════════════════════════*/
   void callbackEmergencyCmd(const tier4_vehicle_msgs::msg::VehicleEmergencyStamped::SharedPtr msg) 
   {
-    RCLCPP_WARN(get_logger(), "Emergency command received: %s", msg->emergency ? "ACTIVE" : "INACTIVE");
+    // RCLCPP_DEBUG(get_logger(), "Emergency command received: %s", msg->emergency ? "ACTIVE" : "INACTIVE");
     
     if (msg->emergency) {
       // Send emergency brake command via ULC
@@ -355,8 +357,8 @@ private:
     ulc_cmd.cmd = msg->longitudinal.velocity;
     ulc_cmd.clear = false;
     ulc_cmd.enable = true;
-    ulc_cmd.limit_accel = 0;
-    ulc_cmd.limit_decel = 0;
+    ulc_cmd.limit_accel = 3;
+    ulc_cmd.limit_decel = 3;
     ulc_cmd.limit_jerk_throttle = 0;
     ulc_cmd.limit_jerk_brake = 0;
     ulc_cmd.enable_shift = false;
