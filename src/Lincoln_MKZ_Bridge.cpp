@@ -17,8 +17,6 @@
 #include "autoware_vehicle_msgs/msg/velocity_report.hpp"
 #include "autoware_vehicle_msgs/msg/control_mode_report.hpp"
 #include "autoware_vehicle_msgs/srv/control_mode_command.hpp"
-#include "tier4_vehicle_msgs/msg/actuation_command_stamped.hpp"
-#include "tier4_vehicle_msgs/msg/actuation_status_stamped.hpp"
 #include "tier4_vehicle_msgs/msg/steering_wheel_status_stamped.hpp"
 #include "tier4_vehicle_msgs/msg/vehicle_emergency_stamped.hpp"
 
@@ -61,7 +59,6 @@ public:
     steering_report_pub = create_publisher<autoware_vehicle_msgs::msg::SteeringReport>("/vehicle/status/steering_status", 10);
     vehicle_speed_pub = create_publisher<autoware_vehicle_msgs::msg::VelocityReport>("/vehicle/status/velocity_status", 10);
     control_mode_pub = create_publisher<autoware_vehicle_msgs::msg::ControlModeReport>("/vehicle/status/control_mode", rclcpp::QoS{1});
-    actuation_status_pub = create_publisher<tier4_vehicle_msgs::msg::ActuationStatusStamped>("/vehicle/status/actuation_status", 10);
     steering_wheel_status_pub = create_publisher<tier4_vehicle_msgs::msg::SteeringWheelStatusStamped>("/vehicle/status/steering_wheel_status", 10);
     turn_indicators_status_pub = create_publisher<autoware_vehicle_msgs::msg::TurnIndicatorsReport>("/vehicle/status/turn_indicators_status", 10);
     hazard_lights_status_pub = create_publisher<autoware_vehicle_msgs::msg::HazardLightsReport>("/vehicle/status/hazard_lights_status", 10);
@@ -101,10 +98,6 @@ public:
         "/control/command/hazard_lights_cmd", rclcpp::QoS{1},
         std::bind(&Lincoln_MKZ_Bridge::callbackHazardLightsCmd, this, _1));
     
-    actuation_cmd_sub = create_subscription<tier4_vehicle_msgs::msg::ActuationCommandStamped>(
-        "/control/command/actuation_cmd", 1,
-        std::bind(&Lincoln_MKZ_Bridge::callbackActuationCmd, this, _1));
-    
     emergency_cmd_sub = create_subscription<tier4_vehicle_msgs::msg::VehicleEmergencyStamped>(
         "/control/command/emergency_cmd", 1,
         std::bind(&Lincoln_MKZ_Bridge::callbackEmergencyCmd, this, _1));
@@ -132,7 +125,6 @@ private:
   rclcpp::Time ctrl_time;
 
   // Command storage for status reporting
-  tier4_vehicle_msgs::msg::ActuationCommandStamped::ConstSharedPtr last_actuation_cmd_;
   autoware_vehicle_msgs::msg::TurnIndicatorsCommand::ConstSharedPtr last_turn_cmd_;
   autoware_vehicle_msgs::msg::HazardLightsCommand::ConstSharedPtr last_hazard_cmd_;
 
@@ -147,7 +139,6 @@ private:
   rclcpp::Publisher<autoware_vehicle_msgs::msg::SteeringReport>::SharedPtr steering_report_pub;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::VelocityReport>::SharedPtr vehicle_speed_pub;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::ControlModeReport>::SharedPtr control_mode_pub;
-  rclcpp::Publisher<tier4_vehicle_msgs::msg::ActuationStatusStamped>::SharedPtr actuation_status_pub;
   rclcpp::Publisher<tier4_vehicle_msgs::msg::SteeringWheelStatusStamped>::SharedPtr steering_wheel_status_pub;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::TurnIndicatorsReport>::SharedPtr turn_indicators_status_pub;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::HazardLightsReport>::SharedPtr hazard_lights_status_pub;
@@ -164,7 +155,6 @@ private:
   rclcpp::Subscription<autoware_control_msgs::msg::Control>::SharedPtr control_sub;
   rclcpp::Subscription<autoware_vehicle_msgs::msg::TurnIndicatorsCommand>::SharedPtr turn_indicators_cmd_sub;
   rclcpp::Subscription<autoware_vehicle_msgs::msg::HazardLightsCommand>::SharedPtr hazard_lights_cmd_sub;
-  rclcpp::Subscription<tier4_vehicle_msgs::msg::ActuationCommandStamped>::SharedPtr actuation_cmd_sub;
   rclcpp::Subscription<tier4_vehicle_msgs::msg::VehicleEmergencyStamped>::SharedPtr emergency_cmd_sub;
 
   /*──────────────── Services ────────────────*/
@@ -219,23 +209,6 @@ private:
    *  NEW: Missing callback implementations
    *══════════════════════════════════════════════*/
   // TODO: Correct the logic on all so that this is passed down to DS DBW
-  
-  void callbackActuationCmd(const tier4_vehicle_msgs::msg::ActuationCommandStamped::SharedPtr msg)
-  {
-    RCLCPP_DEBUG(get_logger(), "Received actuation command: accel=%.3f, brake=%.3f, steer=%.3f", 
-                 msg->actuation.accel_cmd, msg->actuation.brake_cmd, msg->actuation.steer_cmd);
-    
-    last_actuation_cmd_ = msg;
-    
-    // Publish actuation status (echo back the commanded values as status)
-    tier4_vehicle_msgs::msg::ActuationStatusStamped status;
-    status.header = msg->header;
-    status.status.accel_status = msg->actuation.accel_cmd;
-    status.status.brake_status = msg->actuation.brake_cmd;
-    status.status.steer_status = msg->actuation.steer_cmd;
-    actuation_status_pub->publish(status);
-    
-  }
 
   void callbackTurnIndicatorsCmd(const autoware_vehicle_msgs::msg::TurnIndicatorsCommand::SharedPtr msg)
   {
