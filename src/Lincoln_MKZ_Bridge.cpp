@@ -27,6 +27,8 @@
 #include "ds_dbw_msgs/msg/gear_report.hpp"
 #include "ds_dbw_msgs/msg/steering_cmd.hpp"
 #include "ds_dbw_msgs/msg/steering_report.hpp"
+#include "ds_dbw_msgs/msg/throttle_cmd.hpp"
+#include "ds_dbw_msgs/msg/throttle_report.hpp"
 #include "ds_dbw_msgs/msg/ulc_cmd.hpp"
 #include "ds_dbw_msgs/msg/vehicle_velocity.hpp"
 
