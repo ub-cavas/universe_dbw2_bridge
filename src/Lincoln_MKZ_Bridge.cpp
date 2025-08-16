@@ -7,17 +7,16 @@
 
 /*────────── Autoware messages ──────────*/
 #include "autoware_control_msgs/msg/control.hpp"
+#include "autoware_vehicle_msgs/srv/control_mode_command.hpp"
+#include "autoware_vehicle_msgs/msg/control_mode_report.hpp"
 #include "autoware_vehicle_msgs/msg/gear_command.hpp"
 #include "autoware_vehicle_msgs/msg/gear_report.hpp"
-#include "autoware_vehicle_msgs/msg/turn_indicators_command.hpp"
-#include "autoware_vehicle_msgs/msg/turn_indicators_report.hpp"
 #include "autoware_vehicle_msgs/msg/hazard_lights_command.hpp"
 #include "autoware_vehicle_msgs/msg/hazard_lights_report.hpp"
+#include "autoware_vehicle_msgs/msg/turn_indicators_command.hpp"
+#include "autoware_vehicle_msgs/msg/turn_indicators_report.hpp"
 #include "autoware_vehicle_msgs/msg/steering_report.hpp"
 #include "autoware_vehicle_msgs/msg/velocity_report.hpp"
-#include "autoware_vehicle_msgs/msg/control_mode_report.hpp"
-#include "autoware_vehicle_msgs/srv/control_mode_command.hpp"
-#include "tier4_vehicle_msgs/msg/steering_wheel_status_stamped.hpp"
 #include "tier4_vehicle_msgs/msg/vehicle_emergency_stamped.hpp"
 
 /*────────── Dataspeed DBW messages ──────────*/
@@ -25,8 +24,8 @@
 #include "ds_dbw_msgs/msg/gear_report.hpp"
 #include "ds_dbw_msgs/msg/steering_cmd.hpp"
 #include "ds_dbw_msgs/msg/steering_report.hpp"
-#include "ds_dbw_msgs/msg/throttle_cmd.hpp"
-#include "ds_dbw_msgs/msg/throttle_report.hpp"
+#include "ds_dbw_msgs/msg/turn_signal_cmd.hpp"
+#include "ds_dbw_msgs/msg/turn_signal_report.hpp"
 #include "ds_dbw_msgs/msg/ulc_cmd.hpp"
 #include "ds_dbw_msgs/msg/vehicle_velocity.hpp"
 
@@ -52,18 +51,22 @@ public:
     /*──────────────── Publishers to DBW ────────────────*/
     gear_pub = create_publisher<ds_dbw_msgs::msg::GearCmd>("/vehicle/gear/cmd", 10);
     steering_pub = create_publisher<ds_dbw_msgs::msg::SteeringCmd>("/vehicle/steering/cmd", 10);
+    turn_signal_pub = create_publisher<ds_dbw_msgs::msg::TurnSignalCmd>("/vehicle/turn_signal/cmd", 10);
     ulc_pub = create_publisher<ds_dbw_msgs::msg::UlcCmd>("/vehicle/ulc/cmd", 10);
 
     /*──────────────── Publishers to Autoware ────────────────*/
+    control_mode_report_pub = create_publisher<autoware_vehicle_msgs::msg::ControlModeReport>("/vehicle/status/control_mode", rclcpp::QoS{1});
     gear_report_pub = create_publisher<autoware_vehicle_msgs::msg::GearReport>("/vehicle/status/gear_status", 10);
+    hazard_lights_report_pub = create_publisher<autoware_vehicle_msgs::msg::HazardLightsReport>("/vehicle/status/hazard_lights_status", 10);
     steering_report_pub = create_publisher<autoware_vehicle_msgs::msg::SteeringReport>("/vehicle/status/steering_status", 10);
-    vehicle_speed_pub = create_publisher<autoware_vehicle_msgs::msg::VelocityReport>("/vehicle/status/velocity_status", 10);
-    control_mode_pub = create_publisher<autoware_vehicle_msgs::msg::ControlModeReport>("/vehicle/status/control_mode", rclcpp::QoS{1});
-    steering_wheel_status_pub = create_publisher<tier4_vehicle_msgs::msg::SteeringWheelStatusStamped>("/vehicle/status/steering_wheel_status", 10);
-    turn_indicators_status_pub = create_publisher<autoware_vehicle_msgs::msg::TurnIndicatorsReport>("/vehicle/status/turn_indicators_status", 10);
-    hazard_lights_status_pub = create_publisher<autoware_vehicle_msgs::msg::HazardLightsReport>("/vehicle/status/hazard_lights_status", 10);
+    turn_indicators_report_pub = create_publisher<autoware_vehicle_msgs::msg::TurnIndicatorsReport>("/vehicle/status/turn_indicators_status", 10);
+    velocity_report_pub = create_publisher<autoware_vehicle_msgs::msg::VelocityReport>("/vehicle/status/velocity_status", 10);
 
     /*──────────────── Subscriptions from DBW ────────────────*/
+    enable_sub = create_subscription<std_msgs::msg::Bool>(
+        "/vehicle/dbw_enabled", rclcpp::QoS(3),
+        std::bind(&Lincoln_MKZ_Bridge::callbackDbwEnabled, this, _1));
+    
     gear_report_sub = create_subscription<ds_dbw_msgs::msg::GearReport>(
         "/vehicle/gear/report", 10,
         std::bind(&Lincoln_MKZ_Bridge::callbackGearReport, this, _1));
@@ -72,13 +75,13 @@ public:
         "/vehicle/steering/report", 10,
         std::bind(&Lincoln_MKZ_Bridge::callbackSteeringReport, this, _1));
     
+    turn_signal_report_sub = create_subscription<ds_dbw_msgs::msg::TurnSignalReport>(
+        "/vehicle/turn_signal/report", 10,
+        std::bind(&Lincoln_MKZ_Bridge::callbackTurnSignalReport, this, _1));
+    
     vehicle_speed_sub = create_subscription<ds_dbw_msgs::msg::VehicleVelocity>(
         "/vehicle/vehicle_velocity", 10,
         std::bind(&Lincoln_MKZ_Bridge::callbackVehicleTwist, this, _1));
-
-    enable_sub = create_subscription<std_msgs::msg::Bool>(
-        "/vehicle/dbw_enabled", rclcpp::QoS(3),
-        std::bind(&Lincoln_MKZ_Bridge::callbackDbwEnabled, this, _1));
 
     /*──────────────── Subscriptions from Autoware ────────────────*/
     gear_sub = create_subscription<autoware_vehicle_msgs::msg::GearCommand>(
@@ -89,7 +92,6 @@ public:
         "/control/command/control_cmd", 10,
         std::bind(&Lincoln_MKZ_Bridge::callbackControlCmd, this, _1));
 
-    // NEW: Missing callback implementations
     turn_indicators_cmd_sub = create_subscription<autoware_vehicle_msgs::msg::TurnIndicatorsCommand>(
         "/control/command/turn_indicators_cmd", rclcpp::QoS{1},
         std::bind(&Lincoln_MKZ_Bridge::callbackTurnIndicatorsCmd, this, _1));
@@ -110,10 +112,6 @@ public:
   }
 
 private:
-  /*══════════════════════════════════════════════
-   *  Member variables
-   *══════════════════════════════════════════════*/
-  
   // Vehicle parameters
   double wheel_base;
   double steering_gain;
@@ -122,33 +120,29 @@ private:
   // State variables
   bool is_clear_override_needed_{false};
   bool dbw_enabled_{false};
-  rclcpp::Time ctrl_time;
-
-  // Command storage for status reporting
-  autoware_vehicle_msgs::msg::TurnIndicatorsCommand::ConstSharedPtr last_turn_cmd_;
-  autoware_vehicle_msgs::msg::HazardLightsCommand::ConstSharedPtr last_hazard_cmd_;
 
   /*──────────────── Publishers ────────────────*/
   // To DBW
   rclcpp::Publisher<ds_dbw_msgs::msg::GearCmd>::SharedPtr gear_pub;
   rclcpp::Publisher<ds_dbw_msgs::msg::SteeringCmd>::SharedPtr steering_pub;
+  rclcpp::Publisher<ds_dbw_msgs::msg::TurnSignalCmd>::SharedPtr turn_signal_pub;
   rclcpp::Publisher<ds_dbw_msgs::msg::UlcCmd>::SharedPtr ulc_pub;
 
   // To Autoware
+  rclcpp::Publisher<autoware_vehicle_msgs::msg::ControlModeReport>::SharedPtr control_mode_report_pub;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::GearReport>::SharedPtr gear_report_pub;
+  rclcpp::Publisher<autoware_vehicle_msgs::msg::HazardLightsReport>::SharedPtr hazard_lights_report_pub;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::SteeringReport>::SharedPtr steering_report_pub;
-  rclcpp::Publisher<autoware_vehicle_msgs::msg::VelocityReport>::SharedPtr vehicle_speed_pub;
-  rclcpp::Publisher<autoware_vehicle_msgs::msg::ControlModeReport>::SharedPtr control_mode_pub;
-  rclcpp::Publisher<tier4_vehicle_msgs::msg::SteeringWheelStatusStamped>::SharedPtr steering_wheel_status_pub;
-  rclcpp::Publisher<autoware_vehicle_msgs::msg::TurnIndicatorsReport>::SharedPtr turn_indicators_status_pub;
-  rclcpp::Publisher<autoware_vehicle_msgs::msg::HazardLightsReport>::SharedPtr hazard_lights_status_pub;
+  rclcpp::Publisher<autoware_vehicle_msgs::msg::TurnIndicatorsReport>::SharedPtr turn_indicators_report_pub;
+  rclcpp::Publisher<autoware_vehicle_msgs::msg::VelocityReport>::SharedPtr velocity_report_pub;
 
   /*──────────────── Subscriptions ────────────────*/
   // From DBW
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr enable_sub;
   rclcpp::Subscription<ds_dbw_msgs::msg::GearReport>::SharedPtr gear_report_sub;
   rclcpp::Subscription<ds_dbw_msgs::msg::SteeringReport>::SharedPtr steering_report_sub;
+  rclcpp::Subscription<ds_dbw_msgs::msg::TurnSignalReport>::SharedPtr turn_signal_report_sub;
   rclcpp::Subscription<ds_dbw_msgs::msg::VehicleVelocity>::SharedPtr vehicle_speed_sub;
-  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr enable_sub;
   
   // From Autoware
   rclcpp::Subscription<autoware_vehicle_msgs::msg::GearCommand>::SharedPtr gear_sub;
@@ -205,37 +199,42 @@ private:
     }
   }
 
-  /*══════════════════════════════════════════════
-   *  NEW: Missing callback implementations
-   *══════════════════════════════════════════════*/
-  // TODO: Correct the logic on all so that this is passed down to DS DBW
-
   void callbackTurnIndicatorsCmd(const autoware_vehicle_msgs::msg::TurnIndicatorsCommand::SharedPtr msg)
   {
     RCLCPP_DEBUG(get_logger(), "Received turn indicators command: %d", msg->command);
     
-    last_turn_cmd_ = msg;
-    
-    // Publish turn indicators status
-    autoware_vehicle_msgs::msg::TurnIndicatorsReport report;
-    report.stamp = now();
-    report.report = msg->command;
-    turn_indicators_status_pub->publish(report);
-    
+    using autoware_vehicle_msgs::msg::TurnIndicatorsCommand;
+    using ds_dbw_msgs::msg::TurnSignal;
+
+    ds_dbw_msgs::msg::TurnSignalCmd tsc_msg;
+
+    if (msg->command == TurnIndicatorsCommand::ENABLE_LEFT) {
+      tsc_msg.cmd.value = TurnSignal::LEFT;
+    } else if (msg->command == TurnIndicatorsCommand::ENABLE_RIGHT) {
+      tsc_msg.cmd.value = TurnSignal::RIGHT;
+    } else {
+      tsc_msg.cmd.value = TurnSignal::NONE;
+    }
+  
+    turn_signal_pub->publish(tsc_msg);
   }
 
   void callbackHazardLightsCmd(const autoware_vehicle_msgs::msg::HazardLightsCommand::SharedPtr msg)
   {
     RCLCPP_DEBUG(get_logger(), "Received hazard lights command: %d", msg->command);
+
+    using autoware_vehicle_msgs::msg::HazardLightsCommand;
+    using ds_dbw_msgs::msg::TurnSignal;
+
+    ds_dbw_msgs::msg::TurnSignalCmd tsc_msg;
+
+    if (msg->command == HazardLightsCommand::ENABLE) {
+      tsc_msg.cmd.value = TurnSignal::HAZARD;
+    } else {
+      tsc_msg.cmd.value = TurnSignal::NONE;
+    }
     
-    last_hazard_cmd_ = msg;
-    
-    // Publish hazard lights status
-    autoware_vehicle_msgs::msg::HazardLightsReport report;
-    report.stamp = now();
-    report.report = msg->command;
-    hazard_lights_status_pub->publish(report);
-    
+    turn_signal_pub->publish(tsc_msg);
   }
 
   void callbackDbwEnabled(const std_msgs::msg::Bool::SharedPtr msg)
@@ -250,12 +249,9 @@ private:
     mode_report.mode = dbw_enabled_ ? 
         autoware_vehicle_msgs::msg::ControlModeReport::AUTONOMOUS :
         autoware_vehicle_msgs::msg::ControlModeReport::MANUAL;
-    control_mode_pub->publish(mode_report);
+    control_mode_report_pub->publish(mode_report);
   }
 
-  /*══════════════════════════════════════════════
-   *  Enhanced emergency handling
-   *══════════════════════════════════════════════*/
   void callbackEmergencyCmd(const tier4_vehicle_msgs::msg::VehicleEmergencyStamped::SharedPtr msg) 
   {
     RCLCPP_DEBUG(get_logger(), "Emergency command received: %s", msg->emergency ? "ACTIVE" : "INACTIVE");
@@ -273,10 +269,6 @@ private:
       RCLCPP_WARN(get_logger(), "Emergency brake applied via ULC");
     }
   }
-
-  /*══════════════════════════════════════════════
-   *  Original callback implementations (enhanced)
-   *══════════════════════════════════════════════*/
   
   void onControlModeRequest(
       const autoware_vehicle_msgs::srv::ControlModeCommand::Request::SharedPtr request,
@@ -351,18 +343,40 @@ private:
 
   void callbackSteeringReport(const ds_dbw_msgs::msg::SteeringReport::SharedPtr msg)
   {
-    // Steering tire angle report
     autoware_vehicle_msgs::msg::SteeringReport aw_steering_report;
     aw_steering_report.stamp = msg->header.stamp;
     curr_steer = msg->steering_wheel_angle * (M_PI / 180.0);
     aw_steering_report.steering_tire_angle = curr_steer / steering_gain;
     steering_report_pub->publish(aw_steering_report);
+  }
 
-    // NEW: Steering wheel status report
-    tier4_vehicle_msgs::msg::SteeringWheelStatusStamped wheel_status;
-    wheel_status.stamp = msg->header.stamp;
-    wheel_status.data = curr_steer;  // Steering wheel angle in radians
-    steering_wheel_status_pub->publish(wheel_status);
+  void callbackTurnSignalReport(const ds_dbw_msgs::msg::TurnSignalReport::SharedPtr msg)
+  {
+    using ds_dbw_msgs::msg::TurnSignal;
+    using autoware_vehicle_msgs::msg::HazardLightsReport;
+    using autoware_vehicle_msgs::msg::TurnIndicatorsReport;
+
+    autoware_vehicle_msgs::msg::HazardLightsReport hazardReport;
+    if (msg->cmd.value == TurnSignal::HAZARD) {
+      hazardReport.report = HazardLightsReport::ENABLE;
+    } else {
+      hazardReport.report = HazardLightsReport::DISABLE;
+    }
+    
+    autoware_vehicle_msgs::msg::TurnIndicatorsReport turnIndicatorsReport;
+    if (msg->cmd.value == TurnSignal::LEFT) {
+      turnIndicatorsReport.report = TurnIndicatorsReport::ENABLE_LEFT;
+    } else if (msg->cmd.value == TurnSignal::RIGHT) {
+      turnIndicatorsReport.report = TurnIndicatorsReport::ENABLE_RIGHT;
+    } else {
+      turnIndicatorsReport.report = TurnIndicatorsReport::DISABLE;
+    }
+    
+    hazardReport.stamp = now();
+    hazard_lights_report_pub->publish(hazardReport);
+
+    turnIndicatorsReport.stamp = now();
+    turn_indicators_report_pub->publish(turnIndicatorsReport);
   }
 
   void callbackVehicleTwist(const ds_dbw_msgs::msg::VehicleVelocity::SharedPtr msg)
@@ -374,7 +388,7 @@ private:
     velocity_msg.header.stamp = msg->header.stamp;
     velocity_msg.longitudinal_velocity = longitudinal_velocity;
     velocity_msg.heading_rate = longitudinal_velocity * std::tan(curr_steer) / wheel_base;
-    vehicle_speed_pub->publish(velocity_msg);
+    velocity_report_pub->publish(velocity_msg);
   }
 
 };
