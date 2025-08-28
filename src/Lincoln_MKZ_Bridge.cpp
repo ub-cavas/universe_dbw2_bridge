@@ -19,6 +19,9 @@
 #include "autoware_vehicle_msgs/msg/velocity_report.hpp"
 #include "tier4_vehicle_msgs/msg/vehicle_emergency_stamped.hpp"
 
+/*────────── Tier4 Vehicle Messages(for Calibrator) ──────────*/
+#include "tier4_vehicle_msgs/msg/actuation_status_stamped.hpp"
+
 /*────────── Dataspeed DBW messages ──────────*/
 #include "ds_dbw_msgs/msg/gear_cmd.hpp"
 #include "ds_dbw_msgs/msg/gear_report.hpp"
@@ -61,6 +64,7 @@ public:
     steering_report_pub = create_publisher<autoware_vehicle_msgs::msg::SteeringReport>("/vehicle/status/steering_status", 10);
     turn_indicators_report_pub = create_publisher<autoware_vehicle_msgs::msg::TurnIndicatorsReport>("/vehicle/status/turn_indicators_status", 10);
     velocity_report_pub = create_publisher<autoware_vehicle_msgs::msg::VelocityReport>("/vehicle/status/velocity_status", 10);
+    actuation_status_pub = create_publisher<tier4_vehicle_msgs::msg::ActuationStatusStamped>("/vehicle/status/actuation_status", 10);
 
     /*──────────────── Subscriptions from DBW ────────────────*/
     enable_sub = create_subscription<std_msgs::msg::Bool>(
@@ -121,6 +125,11 @@ private:
   bool is_clear_override_needed_{false};
   bool dbw_enabled_{false};
 
+  // State variables(for calibration actuation tracking)
+  double current_accel_cmd_{0.0};
+  double current_brake_cmd_{0.0};
+  double current_steer_cmd_{0.0};
+
   /*──────────────── Publishers ────────────────*/
   // To DBW
   rclcpp::Publisher<ds_dbw_msgs::msg::GearCmd>::SharedPtr gear_pub;
@@ -135,7 +144,8 @@ private:
   rclcpp::Publisher<autoware_vehicle_msgs::msg::SteeringReport>::SharedPtr steering_report_pub;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::TurnIndicatorsReport>::SharedPtr turn_indicators_report_pub;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::VelocityReport>::SharedPtr velocity_report_pub;
-
+  rclcpp::Publisher<tier4_vehicle_msgs::msg::ActuationStatusStamped>::SharedPtr actuation_status_pub;
+  
   /*──────────────── Subscriptions ────────────────*/
   // From DBW
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr enable_sub;
@@ -265,6 +275,10 @@ private:
       emergency_cmd.enable = true;
       emergency_cmd.clear = false;
       ulc_pub->publish(emergency_cmd);
+
+      // Update actuation status (for emergency)
+      current_accel_cmd_ = 0.0;
+      current_brake_cmd_ = 0.5;
       
       RCLCPP_WARN(get_logger(), "Emergency brake applied via ULC");
     }
@@ -304,7 +318,31 @@ private:
   }
 
   void callbackControlCmd(const autoware_control_msgs::msg::Control::SharedPtr msg)
-  {    
+  {
+    // Extract actuation info from control command
+    // Store steering command
+    current_steer_cmd_ = msg->lateral.steering_tire_angle;
+    
+    // Simple velocity-based accel/brake estimation
+    static double prev_velocity_cmd = 0.0;
+    double velocity_cmd = msg->longitudinal.velocity;
+    double velocity_diff = velocity_cmd - prev_velocity_cmd;
+    
+    if (velocity_diff > 0.05) {
+        // Accelerating
+        current_accel_cmd_ = std::min(1.0, velocity_diff * 5.0);
+        current_brake_cmd_ = 0.0;
+    } else if (velocity_diff < -0.05) {
+        // Braking
+        current_accel_cmd_ = 0.0;
+        current_brake_cmd_ = std::min(1.0, -velocity_diff * 5.0);
+    } else {
+        // Maintaining - gradual decay
+        current_accel_cmd_ *= 0.95;
+        current_brake_cmd_ *= 0.95;
+    }
+    prev_velocity_cmd = velocity_cmd;
+
     // Longitudinal control via ULC
     ds_dbw_msgs::msg::UlcCmd ulc_cmd;
     ulc_cmd.header.stamp = now();
@@ -348,6 +386,9 @@ private:
     curr_steer = msg->steering_wheel_angle * (M_PI / 180.0);
     aw_steering_report.steering_tire_angle = curr_steer / steering_gain;
     steering_report_pub->publish(aw_steering_report);
+
+    // Publish Actuation Status
+    publishActuationStatus(msg->header.stamp);    
   }
 
   void callbackTurnSignalReport(const ds_dbw_msgs::msg::TurnSignalReport::SharedPtr msg)
@@ -389,6 +430,9 @@ private:
     velocity_msg.longitudinal_velocity = longitudinal_velocity;
     velocity_msg.heading_rate = longitudinal_velocity * std::tan(curr_steer) / wheel_base;
     velocity_report_pub->publish(velocity_msg);
+
+    // Publish Actuation Status
+    publishActuationStatus(msg->header.stamp);
   }
 
 };
