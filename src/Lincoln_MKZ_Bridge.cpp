@@ -131,6 +131,7 @@ private:
   // State variables
   bool is_clear_override_needed_{false};
   bool dbw_enabled_{false};
+  bool driver_override_active_{false};
 
   // State variables(for calibration actuation tracking)
   double current_accel_cmd_{0.0};
@@ -225,7 +226,7 @@ private:
 
   void publishTurnSignalCommand()
   {
-    // Don't send commands during override or if DBW is not enabled
+    // Don't send commands during override (per Dataspeed documentation)
     if (driver_override_active_ && !dbw_enabled_) {
       RCLCPP_DEBUG(get_logger(), "Turn signal command ignored due to driver override");
       return;
@@ -238,18 +239,15 @@ private:
 
     ds_dbw_msgs::msg::TurnSignalCmd tsc_msg;
     
-    //Always populate message header
+    //Populate message header
     tsc_msg.header.stamp = now();
     tsc_msg.header.frame_id = "base_link";
-    
-    //Add enable field for DBW commands
-    tsc_msg.enable = dbw_enabled_;
 
     using autoware_vehicle_msgs::msg::HazardLightsCommand;
     using autoware_vehicle_msgs::msg::TurnIndicatorsCommand;
     using ds_dbw_msgs::msg::TurnSignal;
 
-    //Hazard takes precedence over turn indicators
+    //Priority logic - hazard takes precedence over turn indicators
     if (last_hazard_cmd_->command == HazardLightsCommand::ENABLE) {
       tsc_msg.cmd.value = TurnSignal::HAZARD;
       RCLCPP_DEBUG(get_logger(), "Publishing hazard command");
@@ -267,7 +265,7 @@ private:
     turn_signal_pub->publish(tsc_msg);
   }
 
-  // Store turn indicator commands instead of immediately publishing
+  //Store turn indicator commands instead of immediately publishing
   void callbackTurnIndicatorsCmd(const autoware_vehicle_msgs::msg::TurnIndicatorsCommand::SharedPtr msg)
   {
     RCLCPP_DEBUG(get_logger(), "Received turn indicators command: %d", msg->command);
@@ -275,7 +273,7 @@ private:
     // Command will be published by the periodic timer
   }
 
-  // MODIFIED: Store hazard light commands instead of immediately publishing
+  //Store hazard light commands instead of immediately publishing
   void callbackHazardLightsCmd(const autoware_vehicle_msgs::msg::HazardLightsCommand::SharedPtr msg)
   {
     RCLCPP_DEBUG(get_logger(), "Received hazard lights command: %d", msg->command);
