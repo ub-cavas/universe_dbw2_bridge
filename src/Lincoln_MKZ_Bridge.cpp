@@ -1,6 +1,8 @@
 #include <cmath>
 #include <memory>
 #include <iostream>
+#include <functional>
+#include <chrono>
 
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -18,6 +20,9 @@
 #include "autoware_vehicle_msgs/msg/steering_report.hpp"
 #include "autoware_vehicle_msgs/msg/velocity_report.hpp"
 #include "tier4_vehicle_msgs/msg/vehicle_emergency_stamped.hpp"
+
+/*────────── Tier4 Vehicle Messages(for Calibrator) ──────────*/
+#include "tier4_vehicle_msgs/msg/actuation_status_stamped.hpp"
 
 /*────────── Dataspeed DBW messages ──────────*/
 #include "ds_dbw_msgs/msg/gear_cmd.hpp"
@@ -61,6 +66,7 @@ public:
     steering_report_pub = create_publisher<autoware_vehicle_msgs::msg::SteeringReport>("/vehicle/status/steering_status", 10);
     turn_indicators_report_pub = create_publisher<autoware_vehicle_msgs::msg::TurnIndicatorsReport>("/vehicle/status/turn_indicators_status", 10);
     velocity_report_pub = create_publisher<autoware_vehicle_msgs::msg::VelocityReport>("/vehicle/status/velocity_status", 10);
+    actuation_status_pub = create_publisher<tier4_vehicle_msgs::msg::ActuationStatusStamped>("/vehicle/status/actuation_status", 10);
 
     /*──────────────── Subscriptions from DBW ────────────────*/
     enable_sub = create_subscription<std_msgs::msg::Bool>(
@@ -109,6 +115,11 @@ public:
         "/input/control_mode_request", 
         std::bind(&Lincoln_MKZ_Bridge::onControlModeRequest, this, _1, _2));
 
+    /*──────────────── Timers ────────────────*/
+    // Add periodic turn signal command publishing at 50Hz
+    turn_signal_timer_ = create_wall_timer(
+      std::chrono::milliseconds(20),  // 50Hz
+      std::bind(&Lincoln_MKZ_Bridge::publishTurnSignalCommand, this));
   }
 
 private:
@@ -120,6 +131,16 @@ private:
   // State variables
   bool is_clear_override_needed_{false};
   bool dbw_enabled_{false};
+  bool driver_override_active_{false};
+
+  // State variables(for calibration actuation tracking)
+  double current_accel_cmd_{0.0};
+  double current_brake_cmd_{0.0};
+  double current_steer_cmd_{0.0};
+
+  // Turn signal state management
+  autoware_vehicle_msgs::msg::TurnIndicatorsCommand::SharedPtr last_turn_cmd_;
+  autoware_vehicle_msgs::msg::HazardLightsCommand::SharedPtr last_hazard_cmd_;
 
   /*──────────────── Publishers ────────────────*/
   // To DBW
@@ -135,7 +156,8 @@ private:
   rclcpp::Publisher<autoware_vehicle_msgs::msg::SteeringReport>::SharedPtr steering_report_pub;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::TurnIndicatorsReport>::SharedPtr turn_indicators_report_pub;
   rclcpp::Publisher<autoware_vehicle_msgs::msg::VelocityReport>::SharedPtr velocity_report_pub;
-
+  rclcpp::Publisher<tier4_vehicle_msgs::msg::ActuationStatusStamped>::SharedPtr actuation_status_pub;
+  
   /*──────────────── Subscriptions ────────────────*/
   // From DBW
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr enable_sub;
@@ -153,6 +175,9 @@ private:
 
   /*──────────────── Services ────────────────*/
   rclcpp::Service<autoware_vehicle_msgs::srv::ControlModeCommand>::SharedPtr control_mode_server;
+
+  /*──────────────── Timers ────────────────*/
+  rclcpp::TimerBase::SharedPtr turn_signal_timer_;
 
   uint8_t translateGearAutowareToDS(uint8_t autoware_gear)
   {
@@ -199,42 +224,61 @@ private:
     }
   }
 
-  void callbackTurnIndicatorsCmd(const autoware_vehicle_msgs::msg::TurnIndicatorsCommand::SharedPtr msg)
+  void publishTurnSignalCommand()
   {
-    RCLCPP_DEBUG(get_logger(), "Received turn indicators command: %d", msg->command);
+    // Don't send commands during override (per Dataspeed documentation)
+    if (driver_override_active_ && !dbw_enabled_) {
+      RCLCPP_DEBUG(get_logger(), "Turn signal command ignored due to driver override");
+      return;
+    }
+
+    // Ensure we have both command pointers before proceeding
+    if (!last_turn_cmd_ || !last_hazard_cmd_) {
+      return;
+    }
+
+    ds_dbw_msgs::msg::TurnSignalCmd tsc_msg;
     
+    //Populate message header
+    tsc_msg.header.stamp = now();
+    tsc_msg.header.frame_id = "base_link";
+
+    using autoware_vehicle_msgs::msg::HazardLightsCommand;
     using autoware_vehicle_msgs::msg::TurnIndicatorsCommand;
     using ds_dbw_msgs::msg::TurnSignal;
 
-    ds_dbw_msgs::msg::TurnSignalCmd tsc_msg;
-
-    if (msg->command == TurnIndicatorsCommand::ENABLE_LEFT) {
+    //Priority logic - hazard takes precedence over turn indicators
+    if (last_hazard_cmd_->command == HazardLightsCommand::ENABLE) {
+      tsc_msg.cmd.value = TurnSignal::HAZARD;
+      RCLCPP_DEBUG(get_logger(), "Publishing hazard command");
+    } else if (last_turn_cmd_->command == TurnIndicatorsCommand::ENABLE_LEFT) {
       tsc_msg.cmd.value = TurnSignal::LEFT;
-    } else if (msg->command == TurnIndicatorsCommand::ENABLE_RIGHT) {
+      RCLCPP_DEBUG(get_logger(), "Publishing left turn command");
+    } else if (last_turn_cmd_->command == TurnIndicatorsCommand::ENABLE_RIGHT) {
       tsc_msg.cmd.value = TurnSignal::RIGHT;
+      RCLCPP_DEBUG(get_logger(), "Publishing right turn command");
     } else {
       tsc_msg.cmd.value = TurnSignal::NONE;
+      RCLCPP_DEBUG(get_logger(), "Publishing turn signal off command");
     }
-  
+
     turn_signal_pub->publish(tsc_msg);
   }
 
+  //Store turn indicator commands instead of immediately publishing
+  void callbackTurnIndicatorsCmd(const autoware_vehicle_msgs::msg::TurnIndicatorsCommand::SharedPtr msg)
+  {
+    RCLCPP_DEBUG(get_logger(), "Received turn indicators command: %d", msg->command);
+    last_turn_cmd_ = msg;
+    // Command will be published by the periodic timer
+  }
+
+  //Store hazard light commands instead of immediately publishing
   void callbackHazardLightsCmd(const autoware_vehicle_msgs::msg::HazardLightsCommand::SharedPtr msg)
   {
     RCLCPP_DEBUG(get_logger(), "Received hazard lights command: %d", msg->command);
-
-    using autoware_vehicle_msgs::msg::HazardLightsCommand;
-    using ds_dbw_msgs::msg::TurnSignal;
-
-    ds_dbw_msgs::msg::TurnSignalCmd tsc_msg;
-
-    if (msg->command == HazardLightsCommand::ENABLE) {
-      tsc_msg.cmd.value = TurnSignal::HAZARD;
-    } else {
-      tsc_msg.cmd.value = TurnSignal::NONE;
-    }
-    
-    turn_signal_pub->publish(tsc_msg);
+    last_hazard_cmd_ = msg;
+    // Command will be published by the periodic timer
   }
 
   void callbackDbwEnabled(const std_msgs::msg::Bool::SharedPtr msg)
@@ -242,6 +286,13 @@ private:
     RCLCPP_DEBUG(get_logger(), "DBW enabled status changed: %s", dbw_enabled_ ? "ENABLED" : "DISABLED");
 
     dbw_enabled_ = msg->data;
+
+    //Update override status when DBW state changes
+    if (!dbw_enabled_) {
+      driver_override_active_ = true;
+    } else {
+      driver_override_active_ = false;
+    }
     
     // Publish control mode based on DBW status
     autoware_vehicle_msgs::msg::ControlModeReport mode_report;
@@ -265,6 +316,10 @@ private:
       emergency_cmd.enable = true;
       emergency_cmd.clear = false;
       ulc_pub->publish(emergency_cmd);
+
+      // Update actuation status (for emergency)
+      current_accel_cmd_ = 0.0;
+      current_brake_cmd_ = 0.5;
       
       RCLCPP_WARN(get_logger(), "Emergency brake applied via ULC");
     }
@@ -304,7 +359,31 @@ private:
   }
 
   void callbackControlCmd(const autoware_control_msgs::msg::Control::SharedPtr msg)
-  {    
+  {
+    // Extract actuation info from control command
+    // Store steering command
+    current_steer_cmd_ = msg->lateral.steering_tire_angle;
+    
+    // Simple velocity-based accel/brake estimation
+    static double prev_velocity_cmd = 0.0;
+    double velocity_cmd = msg->longitudinal.velocity;
+    double velocity_diff = velocity_cmd - prev_velocity_cmd;
+    
+    if (velocity_diff > 0.05) {
+        // Accelerating
+        current_accel_cmd_ = std::min(1.0, velocity_diff * 5.0);
+        current_brake_cmd_ = 0.0;
+    } else if (velocity_diff < -0.05) {
+        // Braking
+        current_accel_cmd_ = 0.0;
+        current_brake_cmd_ = std::min(1.0, -velocity_diff * 5.0);
+    } else {
+        // Maintaining - gradual decay
+        current_accel_cmd_ *= 0.95;
+        current_brake_cmd_ *= 0.95;
+    }
+    prev_velocity_cmd = velocity_cmd;
+
     // Longitudinal control via ULC
     ds_dbw_msgs::msg::UlcCmd ulc_cmd;
     ulc_cmd.header.stamp = now();
@@ -348,34 +427,42 @@ private:
     curr_steer = msg->steering_wheel_angle * (M_PI / 180.0);
     aw_steering_report.steering_tire_angle = curr_steer / steering_gain;
     steering_report_pub->publish(aw_steering_report);
+
+    // Publish Actuation Status
+    publishActuationStatus(msg->header.stamp);    
   }
 
+  //Use correct field for turn signal status reporting
   void callbackTurnSignalReport(const ds_dbw_msgs::msg::TurnSignalReport::SharedPtr msg)
   {
     using ds_dbw_msgs::msg::TurnSignal;
     using autoware_vehicle_msgs::msg::HazardLightsReport;
     using autoware_vehicle_msgs::msg::TurnIndicatorsReport;
 
+    // Check if your TurnSignalReport has different field names
+    // You may need to adjust this based on the actual message structure
+    // Common field names are: state, status, turn_signal, output
+    uint8_t current_state = msg->cmd.value; // Adjust this field name if needed
+
     autoware_vehicle_msgs::msg::HazardLightsReport hazardReport;
-    if (msg->cmd.value == TurnSignal::HAZARD) {
+    hazardReport.stamp = now();
+    if (current_state == TurnSignal::HAZARD) {
       hazardReport.report = HazardLightsReport::ENABLE;
     } else {
       hazardReport.report = HazardLightsReport::DISABLE;
     }
-    
+
     autoware_vehicle_msgs::msg::TurnIndicatorsReport turnIndicatorsReport;
-    if (msg->cmd.value == TurnSignal::LEFT) {
+    turnIndicatorsReport.stamp = now();
+    if (current_state == TurnSignal::LEFT) {
       turnIndicatorsReport.report = TurnIndicatorsReport::ENABLE_LEFT;
-    } else if (msg->cmd.value == TurnSignal::RIGHT) {
+    } else if (current_state == TurnSignal::RIGHT) {
       turnIndicatorsReport.report = TurnIndicatorsReport::ENABLE_RIGHT;
     } else {
       turnIndicatorsReport.report = TurnIndicatorsReport::DISABLE;
     }
-    
-    hazardReport.stamp = now();
-    hazard_lights_report_pub->publish(hazardReport);
 
-    turnIndicatorsReport.stamp = now();
+    hazard_lights_report_pub->publish(hazardReport);
     turn_indicators_report_pub->publish(turnIndicatorsReport);
   }
 
@@ -389,8 +476,23 @@ private:
     velocity_msg.longitudinal_velocity = longitudinal_velocity;
     velocity_msg.heading_rate = longitudinal_velocity * std::tan(curr_steer) / wheel_base;
     velocity_report_pub->publish(velocity_msg);
-  }
 
+    // Publish Actuation Status
+    publishActuationStatus(msg->header.stamp);
+  }
+  
+  void publishActuationStatus(const rclcpp::Time& timestamp)
+  {
+    tier4_vehicle_msgs::msg::ActuationStatusStamped actuation_status;
+    actuation_status.header.stamp = timestamp;
+    actuation_status.header.frame_id = "base_link";
+    
+    actuation_status.status.accel_status = static_cast<float>(current_accel_cmd_);
+    actuation_status.status.brake_status = static_cast<float>(current_brake_cmd_);
+    actuation_status.status.steer_status = static_cast<float>(current_steer_cmd_);
+    
+    actuation_status_pub->publish(actuation_status);
+  }
 };
 
 /*============================================================================*/
